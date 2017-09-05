@@ -171,9 +171,13 @@ public class SharingSession {
     }
     
     /// The `NSManagedObjectContext` used to retrieve the conversations
-    let userInterfaceContext: NSManagedObjectContext
+    var userInterfaceContext: NSManagedObjectContext {
+        return contextDirectory.uiContext
+    }
 
-    private let syncContext: NSManagedObjectContext
+    private var syncContext: NSManagedObjectContext {
+        return contextDirectory.syncContext
+    }
 
     /// Directory of all application statuses
     private let applicationStatusDirectory : ApplicationStatusDirectory
@@ -186,6 +190,8 @@ public class SharingSession {
     private var contextSaveObserverToken: NSObjectProtocol?
 
     let transportSession: ZMTransportSession
+    
+    private var contextDirectory: ManagedObjectContextDirectory!
     
     /// The `ZMConversationListDirectory` containing all conversation lists
     private var directory: ZMConversationListDirectory {
@@ -219,45 +225,49 @@ public class SharingSession {
     /// no user is currently logged in.
     /// - returns: The initialized session object if no error is thrown
     
-    public convenience init(applicationGroupIdentifier: String, hostBundleIdentifier: String) throws {
+    public convenience init(applicationGroupIdentifier: String, accountIdentifier: UUID, hostBundleIdentifier: String) throws {
+        let sharedContainerURL = FileManager.sharedContainerDirectory(for: applicationGroupIdentifier)
+        guard !StorageStack.shared.needsToRelocateOrMigrateLocalStack(accountIdentifier: accountIdentifier, applicationContainer: sharedContainerURL) else { throw InitializationError.needsMigration }
         
-        guard let sharedContainerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: applicationGroupIdentifier) else {
-            throw InitializationError.missingSharedContainer
-        }
+        let group = DispatchGroup()
         
-        let storeURL = sharedContainerURL.appendingPathComponent(hostBundleIdentifier, isDirectory: true).appendingPathComponent("store.wiredatabase")
-        let keyStoreURL = sharedContainerURL
-        
-        guard !NSManagedObjectContext.needsToPrepareLocalStore(at: storeURL) else { throw InitializationError.needsMigration }
-
-        let userInterfaceContext = NSManagedObjectContext.createUserInterfaceContextWithStore(at: storeURL)!
-        let syncContext = NSManagedObjectContext.createSyncContextWithStore(at: storeURL, keyStore: keyStoreURL)!
-        
-        userInterfaceContext.zm_sync = syncContext
-        syncContext.zm_userInterface = userInterfaceContext
+        var directory: ManagedObjectContextDirectory!
+        group.enter()
+        StorageStack.shared.createManagedObjectContextDirectory(
+            accountIdentifier: accountIdentifier,
+            applicationContainer: sharedContainerURL,
+            startedMigrationCallback: {  },
+            completionHandler: { contextDirectory in
+                directory = contextDirectory
+                group.leave()
+            }
+        )
+        _ = group.wait(timeout: .distantFuture)
         
         let environment = ZMBackendEnvironment(userDefaults: UserDefaults.shared())
-        let cookieStorage = ZMPersistentCookieStorage(forServerName: environment.backendURL.host!)
-                
+        let cookieStorage = ZMPersistentCookieStorage(forServerName: environment.backendURL.host!, userIdentifier: accountIdentifier)
+        let reachabilityGroup = ZMSDispatchGroup(dispatchGroup: DispatchGroup(), label: "Sharing session reachability")!
+        let serverNames = [environment.backendURL, environment.backendWSURL].flatMap{ $0.host }
+        let reachability = ZMReachability(serverNames: serverNames, observer: nil, queue: .main, group: reachabilityGroup)
+        
         let transportSession =  ZMTransportSession(
             baseURL: environment.backendURL,
             websocketURL: environment.backendWSURL,
             cookieStorage: cookieStorage,
+            reachability: reachability,
             initialAccessToken: ZMAccessToken(),
             sharedContainerIdentifier: applicationGroupIdentifier
         )
         
         try self.init(
-            userInterfaceContext: userInterfaceContext,
-            syncContext: syncContext,
+            contextDirectory: directory,
             transportSession: transportSession,
             sharedContainerURL: sharedContainerURL
         )
 
     }
     
-    internal init(userInterfaceContext: NSManagedObjectContext,
-                  syncContext: NSManagedObjectContext,
+    internal init(contextDirectory: ManagedObjectContextDirectory,
                   transportSession: ZMTransportSession,
                   sharedContainerURL: URL,
                   saveNotificationPersistence: ContextDidSaveNotificationPersistence,
@@ -267,8 +277,7 @@ public class SharingSession {
                   strategyFactory: StrategyFactory
         ) throws {
         
-        self.userInterfaceContext = userInterfaceContext
-        self.syncContext = syncContext
+        self.contextDirectory = contextDirectory
         self.transportSession = transportSession
         self.saveNotificationPersistence = saveNotificationPersistence
         self.analyticsEventPersistence = analyticsEventPersistence
@@ -282,20 +291,20 @@ public class SharingSession {
         setupObservers()
     }
     
-    public convenience init(userInterfaceContext: NSManagedObjectContext, syncContext: NSManagedObjectContext, transportSession: ZMTransportSession, sharedContainerURL: URL) throws {
+    public convenience init(contextDirectory: ManagedObjectContextDirectory, transportSession: ZMTransportSession, sharedContainerURL: URL) throws {
         
-        let applicationStatusDirectory = ApplicationStatusDirectory(syncContext: syncContext, transportSession: transportSession)
+        let applicationStatusDirectory = ApplicationStatusDirectory(syncContext: contextDirectory.syncContext, transportSession: transportSession)
         
         let strategyFactory = StrategyFactory(
-            syncContext: syncContext,
+            syncContext: contextDirectory.syncContext,
             applicationStatus: applicationStatusDirectory
         )
 
         let requestGeneratorStore = RequestGeneratorStore(strategies: strategyFactory.strategies)
 
         let operationLoop = RequestGeneratingOperationLoop(
-            userContext: userInterfaceContext,
-            syncContext: syncContext,
+            userContext: contextDirectory.uiContext,
+            syncContext: contextDirectory.syncContext,
             callBackQueue: .main,
             requestGeneratorStore: requestGeneratorStore,
             transportSession: transportSession
@@ -305,8 +314,7 @@ public class SharingSession {
         let analyticsEventPersistence = ShareExtensionAnalyticsPersistence(sharedContainerURL: sharedContainerURL)
         
         try self.init(
-            userInterfaceContext: userInterfaceContext,
-            syncContext: syncContext,
+            contextDirectory: contextDirectory,
             transportSession: transportSession,
             sharedContainerURL: sharedContainerURL,
             saveNotificationPersistence: saveNotificationPersistence,
@@ -322,9 +330,9 @@ public class SharingSession {
             NotificationCenter.default.removeObserver(token)
             contextSaveObserverToken = nil
         }
-
         transportSession.tearDown()
         strategyFactory.tearDown()
+        StorageStack.reset()
     }
     
     private func setupCaches(atContainerURL containerURL: URL) {
