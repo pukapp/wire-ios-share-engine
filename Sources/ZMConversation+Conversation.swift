@@ -25,11 +25,7 @@ import WireRequestStrategy
 extension ZMConversation: Conversation {
 
     @objc public var name: String { return displayName }
-    
-    @objc public var isTrusted: Bool {
-        return securityLevel == .secure
-    }
-    
+        
     public func appendTextMessage(_ message: String, fetchLinkPreview: Bool) -> Sendable? {
         return append(text: message, fetchLinkPreview: fetchLinkPreview) as? Sendable
     }
@@ -93,9 +89,9 @@ class DegradationObserver : NSObject, ZMConversationObserver, TearDownCapable {
     
     private func processSaveNotification() {
         if !self.conversation.messagesThatCausedSecurityLevelDegradation.isEmpty {
-            let untrustedUsers = Set((self.conversation.activeParticipants.array as! [ZMUser]).filter {
+            let untrustedUsers = self.conversation.activeParticipants.filter {
                 $0.clients.first { !$0.verified } != nil
-            })
+            }
             
             self.callback(ConversationDegradationInfo(conversation: self.conversation,
                                                       users: untrustedUsers)
@@ -104,7 +100,7 @@ class DegradationObserver : NSObject, ZMConversationObserver, TearDownCapable {
     }
     
     func conversationDidChange(_ note: ConversationChangeInfo) {
-        if note.didNotSendMessagesBecauseOfConversationSecurityLevel {
+        if note.causedByConversationPrivacyChange {
             self.callback(ConversationDegradationInfo(conversation: note.conversation,
                                                       users: Set(note.usersThatCausedConversationToDegrade)))
         }
