@@ -230,6 +230,16 @@ public class SharingSession {
     public var writebleArchivedConversations : [Conversation] {
         return directory.archivedConversations.writeableConversations
     }
+    
+    ///外部分享时获取conversation
+    public var sharedConversation : [Conversation] {
+        return userInterfaceContext.sharedConversationList()
+    }
+    
+    ///外部分享时根据关键字搜索conversation
+    public func searchSharedConversation(with text: String) -> [Conversation] {
+        return userInterfaceContext.filterSharedConversationList(withSearchText: text)
+    }
 
     private let operationLoop: RequestGeneratingOperationLoop
 
