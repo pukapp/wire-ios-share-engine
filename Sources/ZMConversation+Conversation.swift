@@ -24,7 +24,7 @@ import WireRequestStrategy
 
 extension ZMConversation: Conversation {
 
-    @objc public var name: String { return displayName }
+    public var name: String { return displayName }
         
     public func appendTextMessage(_ message: String, fetchLinkPreview: Bool) -> Sendable? {
         return append(text: message, fetchLinkPreview: fetchLinkPreview) as? Sendable
@@ -59,7 +59,7 @@ public struct ConversationDegradationInfo {
     }
 }
 
-class DegradationObserver : NSObject, ZMConversationObserver, TearDownCapable {
+final class DegradationObserver : NSObject, ZMConversationObserver, TearDownCapable {
     
     let callback : (ConversationDegradationInfo)->()
     let conversation : ZMConversation
@@ -89,7 +89,7 @@ class DegradationObserver : NSObject, ZMConversationObserver, TearDownCapable {
     
     private func processSaveNotification() {
         if !self.conversation.messagesThatCausedSecurityLevelDegradation.isEmpty {
-            let untrustedUsers = self.conversation.activeParticipants.filter {
+            let untrustedUsers = self.conversation.localParticipants.filter {
                 $0.clients.first { !$0.verified } != nil
             }
             
