@@ -203,6 +203,18 @@ final class OperationLoop : NSObject, RequestAvailableObserver {
     func newRequestsAvailable() {
         requestAvailableClosure?()
     }
+    
+    func newMsgRequestsAvailable() {
+        
+    }
+    
+    func newExtensionStreamRequestsAvailable() {
+        
+    }
+    
+    func newExtensionSingleRequestsAvailable() {
+        
+    }
 
 }
 

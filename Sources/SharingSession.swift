@@ -151,6 +151,9 @@ class ApplicationStatusDirectory : ApplicationStatus {
 
     public let notificationFetchStatus: BackgroundNotificationFetchStatus = .done
     
+    public let notificationHugeFetchStatus:
+        BackgroundNotificationFetchStatus = .done
+    
     public var clientRegistrationDelegate: ClientRegistrationDelegate {
         return self.clientRegistrationStatus
     }
